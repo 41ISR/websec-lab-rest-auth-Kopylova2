@@ -4,10 +4,6 @@ const db = new Database("library.db");
 
 db.pragma('foreign_keys = ON');
 
-//старые таблицы
-db.exec('DROP TABLE IF EXISTS reviews;');
-db.exec('DROP TABLE IF EXISTS books;');
-db.exec('DROP TABLE IF EXISTS users;');
 
 // Таблица Users
 db.exec(`

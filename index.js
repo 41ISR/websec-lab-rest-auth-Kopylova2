@@ -1,121 +1,101 @@
-const bcrypt = require("bcryptjs")
-const jwt = require("jsonwebtoken")
-const db = require("./db")
-const express = require("express")
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const db = require("./db");
+const express = require("express");
 
-const salt = "secret-key"
-const SECRET = "this-is-for-JWT"
+const salt = "secret-key";
+const SECRET = "this-is-for-JWT";
 
-const app = express()
+const app = express();
 
-app.use(express.json())
+app.use(express.json());
 
-// Добавка пользователя
-app.post("/api/auth/register", (req, res) => {
-  const { email, name, password, role } = req.body
+app.post("/api/auth/register", async (req, res) => {
+  const { email, username, password, role } = req.body;
+  try {
+    if (!email || !username || !password || !role) {
+      return res.status(400).json({ error: "Отсутствуют обязательные поля." });
+    }
+
+    const existingUser = await db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    if (existingUser) {
+      return res.status(409).json({ error: "Пользователь с данным email уже существует." });
+    }
+
+    const hashPassword = await bcrypt.hash(password, 10);
+    const insertQuery = db.prepare("INSERT INTO users (email, username, password, role) VALUES (?, ?, ?, ?)");
+    const result = insertQuery.run(email, username, hashPassword, role);
+
+    const newUser = db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
+    delete newUser.password;
+    res.status(201).json(newUser);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Ошибка сервера." });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    if (!email || !password) {
+      return res.status(400).json({ error: "Требуется ввести email и пароль." });
+    }
+
+    const user = await db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    if (!user) {
+      return res.status(401).json({ error: "Неверный email или пароль." });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: "Неверный email или пароль." });
+    }
+
+    const {password: _password, ..._user} = user    
+    const token = jwt.sign({ ..._user }, SECRET, { expiresIn: "1h" });
+    res.status(200).json({ token: token, ..._user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Ошибка сервера." });
+  }
+});
+
+app.get("/api/auth/profile", verifyToken, (req, res) => {
+  try {
+    console.log(db.prepare("SELECT * FROM users").all());
+    
+    const userProfile = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+    console.log(userProfile);
+    console.log(req.user.id);
+    
+    
+    res.status(200).json(userProfile);
+
+  }catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Ошибка сервера." });
+  }
+});
+
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization
+    if (!authHeader) res.status(401).json({error: "Нет токена авторизации"})
+
+    if (!(authHeader.split(" ")[1])) res.status(401).json({error: "Неверный формат токена"})
 
     try {
-        if (!email || !name || !password || !role) {
-            return res.status(400).json({ error: "Не хватает данных" })
-        }
-        const syncSalt = bcrypt.genSaltSync(10)
-        const hashed = bcrypt.hashSync(password, syncSalt)
-        const query = db.prepare(
-            `INSERT INTO users (email, name, password, role) VALUES (?, ?, ?, ?)`
-        )
-        const info = query.run(email, name, hashed)
-        const newUser = db
-            .prepare(`SELECT * FROM users WHERE ID = ?`)
-            .get(info.lastInsertRowid)
-        res.status(201).json(newUser)
+        const token = authHeader.split(" ")[1]
+        const decoded = jwt.verify(token, SECRET)
+        req.user = decoded
+        next()
     } catch (error) {
+      res.status(401).json({error: "Неправильный токен"})
         console.error(error)
-        res.status(401).json({error: "Неправильный токен"})
     }
-});
-//получение информации о пользователе
-app.get("/api/auth/profile", (req, res) => {
-  const lastInsertedId = result.lastInsertRowid;
-});
-
-// Добавка книгу
-app.post("/api/books", (req, res) => {const insertBook = db.prepare(
-    'INSERT INTO books (title, author, year, genre, description, createdBy) VALUES (?, ?, ?, ?, ?, ?)');
-  insertBook.run('The Great Adventure', 'Alice Johnson', 2023, 'Fantasy', 'A great adventure story', lastInsertedId);
-
-  console.log(`User added with ID ${lastInsertedId}`); //сообщение о добавленном пользователе
-});
-
-// Вce books
-app.get("/api/books", (req, res) => {
-  const booksWithUsers = db
-    .prepare(
-      `
-        SELECT books.id, books.title, books.author, users.username AS added_by 
-        FROM books 
-        JOIN users ON books.createdBy = users.id
-      `
-    )
-    .all();
-  console.log(booksWithUsers);
-});
-//поиск пользователя по почте
-const email = 'alice@example.com';
-const user = db
-  .prepare('SELECT * FROM users WHERE email = ?')
-  .get(email);
-if (user) {
-  console.log(`Found user: ${JSON.stringify(user)}`);
-} else {
-  console.log('No user found for the given email.');
 }
 
-//мидлварка аутен
-const auth = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-
-  if (!token || token !== 'secret-token') {
-    return res.status(401).json({ message: 'Unauthorized' });
-  }
-
-  //успешный вход пользователя
-  req.user = { id: 1, username: 'test-user', role: 'admin' };
-
-  next();
-};
-
-//мидлварку проверка роль
-function checkRole(...allowedRoles) {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ message: 'Пользователь не авторизован' });
-    }
-
-    if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ message: 'Доступ запрещен: недостаточно прав' });
-    }
-
-    next();
-  };
-};
-
-// для админа проверка роли
-app.get('/api/users', auth, checkRole('admin'), (req, res) => {
-  res.json({ message: 'админ' });
-});
-
-// 2 вариант проверки роли
-app.post('/api/role', auth, (req, res) => {
-  if (!['admin'].includes(req.user.role)) {
-    return res
-      .status(403)
-      .json({ message: 'Доступ запрещен: недостаточно прав(юзер)' });
-  }
-
-  res.json({ message: 'POST-запрос успешно выполнен!' });
-});
-
-// сервер Express
 app.listen(3000, () => {
-  console.log('Server is running on port 3000');
+  console.log("Server is running on port 3000");
 });
